@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="am">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f59e0b">
+  <title>Admin panel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-admin="true">
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html"><span class="brand-badge">L3</span><span class="brand-title">Admin panel</span></a>
+      <nav class="desktop-nav">
+        <a class="nav-link" href="index.html">View site</a>
+        <button id="logout-btn" class="forum-submit" type="button">Log out</button>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <div class="content">
+      <section class="report-head" style="text-align:left">
+        <h1>Owner admin</h1>
+        <p>Visitors can only read the public pages. Changes here are saved to SQLite.</p>
+      </section>
+
+      <section class="forum-admin section">
+        <h2>Search content</h2>
+        <form id="search-form" class="forum-form">
+          <label>Search titles and descriptions<input id="content-search" name="query" type="search" autocomplete="off"></label>
+          <button type="submit" class="forum-submit">Search</button>
+        </form>
+        <div class="display-settings admin-display-settings"><strong>Display settings</strong><label><input class="dark-toggle" type="checkbox"> Dark mode</label><label><input class="english-toggle" type="checkbox"> English mode</label></div>
+        <div id="search-results" class="admin-list stack" style="margin-top:16px"></div>
+      </section>
+
+      <section class="forum-admin section">
+        <h2>Home / contact settings</h2>
+        <form id="settings-form" class="forum-form">
+          <label>Slogan<input name="slogan"></label>
+          <label>Office name<input name="office_name"></label>
+          <label>Address line 1<input name="address_line1"></label>
+          <label>Address line 2<input name="address_line2"></label>
+          <label>Phone<input name="phone"></label>
+          <label>Telegram label<input name="telegram_label"></label>
+          <label>Telegram URL<input name="telegram_url"></label>
+          <label>WhatsApp label<input name="whatsapp_label"></label>
+          <label>WhatsApp URL<input name="whatsapp_url"></label>
+          <label>Footer copyright<input name="copyright"></label>
+          <button type="submit" class="forum-submit">Save settings</button>
+        </form>
+      </section>
+
+      <section class="forum-admin section" data-section="accomplishments">
+        <h2>በየወቅቱ የተከናወኑ መረጃዎች</h2>
+        <form class="forum-form add-form">
+          <label>ርዕስ<input name="title" required maxlength="200"></label>
+          <label>መግለጫ<textarea name="body" rows="5"></textarea></label>
+          <label>Attach images or videos<input name="media" type="file" accept="image/*,video/*" multiple></label>
+          <button type="submit" class="forum-submit">Add</button>
+        </form>
+        <div class="admin-list stack" style="margin-top:16px"></div>
+      </section>
+
+      <section class="forum-admin section" data-section="general">
+        <h2>ጥቅል መረጃዎች</h2>
+        <form class="forum-form add-form">
+          <label>ርዕስ<input name="title" required maxlength="200"></label>
+          <label>መግለጫ<textarea name="body" rows="5"></textarea></label>
+          <label>Attach images or videos<input name="media" type="file" accept="image/*,video/*" multiple></label>
+          <button type="submit" class="forum-submit">Add</button>
+        </form>
+        <div class="admin-list stack" style="margin-top:16px"></div>
+      </section>
+
+      <section class="forum-admin section" data-section="services">
+        <h2>የሚንሰጣቸው አገልግሎቶች</h2>
+        <form class="forum-form add-form">
+          <label>Service text<input name="title" required></label>
+          <input type="hidden" name="body" value=""><label>Attach images or videos<input name="media" type="file" accept="image/*,video/*" multiple></label>
+          <button type="submit" class="forum-submit">Add</button>
+        </form>
+        <div class="admin-list stack" style="margin-top:16px"></div>
+      </section>
+
+      <section class="forum-admin section" data-section="focus">
+        <h2>የትኩረት መስክ</h2>
+        <form class="forum-form add-form">
+          <label>Focus item<input name="title" required></label>
+          <input type="hidden" name="body" value=""><label>Attach images or videos<input name="media" type="file" accept="image/*,video/*" multiple></label>
+          <button type="submit" class="forum-submit">Add</button>
+        </form>
+        <div class="admin-list stack" style="margin-top:16px"></div>
+      </section>
+    </div>
+  </main>
+  <script src="script.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
