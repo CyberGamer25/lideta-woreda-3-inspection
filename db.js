@@ -1,10 +1,5 @@
-const fs = require("fs");
-const path = require("path");
-const initSqlJs = require("sql.js");
 const bcrypt = require("bcryptjs");
-
-const DATA_DIR = path.join(__dirname, "data");
-const DB_PATH = path.join(DATA_DIR, "site.sqlite");
+const { Pool } = require("pg");
 
 const SECTIONS = ["accomplishments", "general", "services", "focus"];
 
@@ -75,167 +70,155 @@ const DEFAULT_SETTINGS = {
   copyright: "ልደታ ክፍለ ከተማ ወረዳ 3 ብልፅግና ኢንስፔክሽን ስነ ምግባር ኮሚሽን ቅ/ፅ/ቤት · ስልክ 0911383081",
 };
 
-let db;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+});
 
-function persist() {
-  if (!db) return;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+async function getOwnerByUsername(username) {
+  const result = await pool.query("SELECT * FROM owners WHERE username = $1", [username]);
+  return result.rows[0] || null;
 }
 
-function all(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
-}
-
-function get(sql, params = []) {
-  return all(sql, params)[0] || null;
-}
-
-function run(sql, params = []) {
-  db.run(sql, params);
-  persist();
-}
-
-function seedOwner() {
+async function seedOwner() {
   const username = process.env.OWNER_USERNAME || "owner";
   const password = process.env.OWNER_PASSWORD || "ChangeMeNow!";
-  const existing = get("SELECT id FROM owners WHERE username = ?", [username]);
+  const existing = await getOwnerByUsername(username);
   const hash = bcrypt.hashSync(password, 12);
+
   if (existing) {
-    const passwordMatches = typeof existing.password_hash === "string" &&
-      bcrypt.compareSync(password, existing.password_hash);
+    const passwordMatches = typeof existing.password_hash === "string" && bcrypt.compareSync(password, existing.password_hash);
     if (!passwordMatches) {
-      run("UPDATE owners SET password_hash = ? WHERE id = ?", [hash, existing.id]);
+      await pool.query("UPDATE owners SET password_hash = $1 WHERE id = $2", [hash, existing.id]);
     }
     return;
   }
-  run("INSERT INTO owners (username, password_hash) VALUES (?, ?)", [username, hash]);
+
+  await pool.query("INSERT INTO owners (username, password_hash) VALUES ($1, $2)", [username, hash]);
 }
 
-function seedContent() {
-  const count = get("SELECT COUNT(*) AS n FROM posts");
-  if (count && count.n > 0) return;
+async function seedContent() {
+  const countResult = await pool.query("SELECT COUNT(*) AS n FROM posts");
+  if (Number(countResult.rows[0].n) > 0) return;
+
   const now = new Date().toISOString();
-  SECTIONS.forEach((section) => {
-    (SEED_POSTS[section] || []).forEach((item, index) => {
-      run(
-        "INSERT INTO posts (section, title, body, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        [section, item.title, item.body, index + 1, now, now]
+  for (const section of SECTIONS) {
+    for (const [index, item] of (SEED_POSTS[section] || []).entries()) {
+      await pool.query(
+        "INSERT INTO posts (section, title, body, media, position, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [section, item.title, item.body || "", JSON.stringify([]), index + 1, now, now]
       );
-    });
-  });
-  Object.entries(DEFAULT_SETTINGS).forEach(([key, value]) => {
-    run("INSERT INTO settings (key, value) VALUES (?, ?)", [key, value]);
-  });
+    }
+  }
+
+  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+    await pool.query(
+      "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
+      [key, String(value)]
+    );
+  }
 }
 
 async function initDb() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    db = new SQL.Database(fs.readFileSync(DB_PATH));
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS owners (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL
     );
+
     CREATE TABLE IF NOT EXISTS posts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       section TEXT NOT NULL,
       title TEXT NOT NULL,
       body TEXT NOT NULL DEFAULT '',
-      media TEXT NOT NULL DEFAULT '[]',
+      media JSONB NOT NULL DEFAULT '[]'::jsonb,
       position INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
     );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      sid TEXT PRIMARY KEY,
+      sess JSON NOT NULL,
+      expire TIMESTAMPTZ NOT NULL
+    );
   `);
-  const postColumns = all("PRAGMA table_info(posts)").map((column) => column.name);
-  if (!postColumns.includes("media")) {
-    db.run("ALTER TABLE posts ADD COLUMN media TEXT NOT NULL DEFAULT '[]'");
-  }
-  persist();
-  seedOwner();
-  seedContent();
+
+  await seedOwner();
+  await seedContent();
   return api;
 }
 
 const api = {
   SECTIONS,
-  persist,
-  getOwnerByUsername(username) {
-    return get("SELECT * FROM owners WHERE username = ?", [username]);
+  async getOwnerByUsername(username) {
+    return getOwnerByUsername(username);
   },
-  searchPosts(query) {
+  async searchPosts(query) {
     const term = `%${String(query || "").trim()}%`;
-    return all(
-      "SELECT id, section, title, body, media, position, created_at, updated_at FROM posts WHERE title LIKE ? OR body LIKE ? ORDER BY section ASC, position ASC, id ASC",
+    const result = await pool.query(
+      "SELECT id, section, title, body, media, position, created_at, updated_at FROM posts WHERE title ILIKE $1 OR body ILIKE $2 ORDER BY section ASC, position ASC, id ASC",
       [term, term]
     );
+    return result.rows;
   },
-  listPosts(section) {
-    return all(
-      "SELECT id, section, title, body, media, position, created_at, updated_at FROM posts WHERE section = ? ORDER BY position ASC, id ASC",
+  async listPosts(section) {
+    const result = await pool.query(
+      "SELECT id, section, title, body, media, position, created_at, updated_at FROM posts WHERE section = $1 ORDER BY position ASC, id ASC",
       [section]
     );
+    return result.rows;
   },
-  getPost(id) {
-    return get("SELECT * FROM posts WHERE id = ?", [id]);
+  async getPost(id) {
+    const result = await pool.query("SELECT * FROM posts WHERE id = $1", [id]);
+    return result.rows[0] || null;
   },
-  createPost(section, title, body, media = []) {
-    const now = new Date().toISOString();
-    const last = get("SELECT MAX(position) AS n FROM posts WHERE section = ?", [section]);
-    const position = (last && last.n ? last.n : 0) + 1;
-    run(
-      "INSERT INTO posts (section, title, body, media, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [section, title, body || "", JSON.stringify(media), position, now, now]
+  async createPost(section, title, body, media = []) {
+    const previous = await pool.query(
+      "SELECT COALESCE(MAX(position), 0) + 1 AS position FROM posts WHERE section = $1",
+      [section]
     );
-    return get("SELECT * FROM posts WHERE section = ? ORDER BY id DESC LIMIT 1", [section]);
-  },
-  updatePost(id, title, body, media = []) {
+    const position = Number(previous.rows[0].position || 1);
     const now = new Date().toISOString();
-    run("UPDATE posts SET title = ?, body = ?, media = ?, updated_at = ? WHERE id = ?", [
-      title,
-      body || "",
-      JSON.stringify(media),
-      now,
-      id,
-    ]);
-    return get("SELECT * FROM posts WHERE id = ?", [id]);
+    const result = await pool.query(
+      "INSERT INTO posts (section, title, body, media, position, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+      [section, title, body || "", JSON.stringify(media || []), position, now, now]
+    );
+    return result.rows[0];
   },
-  deletePost(id) {
-    run("DELETE FROM posts WHERE id = ?", [id]);
+  async updatePost(id, title, body, media = []) {
+    const now = new Date().toISOString();
+    const result = await pool.query(
+      "UPDATE posts SET title = $1, body = $2, media = $3, updated_at = $4 WHERE id = $5 RETURNING *",
+      [title, body || "", JSON.stringify(media || []), now, id]
+    );
+    return result.rows[0] || null;
   },
-  getSettings() {
-    const rows = all("SELECT key, value FROM settings");
+  async deletePost(id) {
+    await pool.query("DELETE FROM posts WHERE id = $1", [id]);
+  },
+  async getSettings() {
+    const result = await pool.query("SELECT key, value FROM settings");
     const settings = { ...DEFAULT_SETTINGS };
-    rows.forEach((row) => {
+    for (const row of result.rows) {
       settings[row.key] = row.value;
-    });
+    }
     return settings;
   },
-  updateSettings(updates) {
-    Object.entries(updates).forEach(([key, value]) => {
-      if (!(key in DEFAULT_SETTINGS)) return;
-      run(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  async updateSettings(updates) {
+    for (const [key, value] of Object.entries(updates)) {
+      if (!(key in DEFAULT_SETTINGS)) continue;
+      await pool.query(
+        "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
         [key, String(value)]
       );
-    });
+    }
     return api.getSettings();
   },
 };
